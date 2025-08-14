@@ -1,24 +1,36 @@
+// =========
+// Basic Setup
+// =========
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-
-// Set canvas dimensions
 canvas.width = 800;
 canvas.height = 600;
 
-// --- Game State ---
+// =========
+// World and Camera
+// =========
+const world = { width: 2000, height: 2000 };
+const camera = { x: 0, y: 0 };
+
+// =========
+// Game State
+// =========
 let score = 0;
 let animationId;
 let isGameOver = false;
 let isGameStarted = false;
-let enemySpawnInterval = 2000; // Initial spawn interval in ms
+let isGameWon = false;
 
-// --- Game Objects ---
+// =========
+// Game Objects
+// =========
 const player = {
-    x: canvas.width / 2,
-    y: canvas.height / 2,
+    x: world.width / 2,
+    y: world.height / 2,
     radius: 15,
     color: 'blue',
-    speed: 5
+    speed: 4,
+    inventory: []
 };
 
 const restartButton = {
@@ -29,36 +41,59 @@ const restartButton = {
 };
 
 const bullets = [];
-const enemies = [];
+const walls = [
+    // Border walls
+    { x: 0, y: 0, width: world.width, height: 10 },
+    { x: 0, y: world.height - 10, width: world.width, height: 10 },
+    { x: 0, y: 0, width: 10, height: world.height },
+    { x: world.width - 10, y: 0, width: 10, height: world.height },
+    // Sample inner walls
+    { x: 300, y: 300, width: 400, height: 30 },
+    { x: 800, y: 600, width: 30, height: 500 },
+    { x: 1200, y: 200, width: 30, height: 300 },
+    { x: 1000, y: 1100, width: 500, height: 30 },
+];
 
-// --- Input Handling ---
+const MASTER_LOOT_LIST = [
+    { x: 400, y: 450, radius: 10, color: 'gold', name: 'Keycard' },
+    { x: 1500, y: 800, radius: 8, color: '#32cd32', name: 'Health Pack' },
+    { x: 900, y: 150, radius: 8, color: 'cyan', name: 'Ammo' },
+];
+let lootItems = [];
+
+const MASTER_ENEMY_LIST = [
+    { x: 200, y: 200, radius: 15, color: '#c82333', speed: 2, detectionRadius: 350, isActive: false },
+    { x: 830, y: 1200, radius: 20, color: '#a01c28', speed: 1.5, detectionRadius: 400, isActive: false },
+    { x: 1600, y: 500, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false },
+    { x: 1400, y: 1400, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false },
+    { x: 450, y: 800, radius: 15, color: '#c82333', speed: 2.2, detectionRadius: 300, isActive: false },
+];
+let enemies = [];
+
+const extractionPoints = [
+    { x: 20, y: 20, width: 80, height: 80 },
+    { x: world.width - 100, y: world.height - 100, width: 80, height: 80 }
+];
+
+// =========
+// Input Handling
+// =========
 const keys = {
-    ArrowUp: false,
-    ArrowDown: false,
-    ArrowLeft: false,
-    ArrowRight: false
+    ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false
 };
-
-window.addEventListener('keydown', (e) => {
-    if (e.key in keys) keys[e.key] = true;
-});
-
-window.addEventListener('keyup', (e) => {
-    if (e.key in keys) keys[e.key] = false;
-});
+window.addEventListener('keydown', (e) => { if (e.key in keys) keys[e.key] = true; });
+window.addEventListener('keyup', (e) => { if (e.key in keys) keys[e.key] = false; });
 
 canvas.addEventListener('mousedown', (e) => {
-    if (!isGameStarted || isGameOver) return;
+    if (!isGameStarted || isGameOver || isGameWon) return;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
+    const mouseX = e.clientX - rect.left + camera.x;
+    const mouseY = e.clientY - rect.top + camera.y;
     const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
-    const bulletSpeed = 7;
+    const bulletSpeed = 8;
     const dx = Math.cos(angle) * bulletSpeed;
     const dy = Math.sin(angle) * bulletSpeed;
-
-    bullets.push({ x: player.x, y: player.y, radius: 5, color: 'red', dx, dy });
+    bullets.push({ x: player.x, y: player.y, radius: 5, color: 'orange', dx, dy });
 });
 
 canvas.addEventListener('click', (e) => {
@@ -66,12 +101,10 @@ canvas.addEventListener('click', (e) => {
         startGame();
         return;
     }
-
-    if (isGameOver) {
+    if (isGameOver || isGameWon) {
         const rect = canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-
         if (mouseX >= restartButton.x && mouseX <= restartButton.x + restartButton.width &&
             mouseY >= restartButton.y && mouseY <= restartButton.y + restartButton.height) {
             restartGame();
@@ -79,100 +112,241 @@ canvas.addEventListener('click', (e) => {
     }
 });
 
-
-// --- Game Logic ---
-function startGame() {
-    isGameStarted = true;
-    score = 0;
-    player.x = canvas.width / 2;
-    player.y = canvas.height / 2;
-    enemies.length = 0;
-    bullets.length = 0;
-    enemySpawnInterval = 2000;
-    isGameOver = false;
-    gameLoop();
-    setTimeout(spawnEnemy, enemySpawnInterval);
+// =========
+// Collision Detection
+// =========
+function isCollidingCircleRect(circle, rect) {
+    const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+    const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+    const distance = Math.hypot(circle.x - closestX, circle.y - closestY);
+    return distance < circle.radius;
 }
 
+// =========
+// Game Logic
+// =========
+
+/**
+ * Initializes or resets the game to its starting state.
+ */
+function startGame() {
+    isGameStarted = true;
+    isGameOver = false;
+    isGameWon = false;
+    score = 0;
+    player.x = world.width / 2;
+    player.y = world.height / 2;
+    player.inventory = [];
+    bullets.length = 0;
+    // Create deep copies of the master lists for the current game session
+    lootItems = JSON.parse(JSON.stringify(MASTER_LOOT_LIST));
+    enemies = JSON.parse(JSON.stringify(MASTER_ENEMY_LIST));
+    gameLoop();
+}
+
+/**
+ * Restarts the game by calling startGame.
+ */
 function restartGame() {
-    // Essentially the same as starting the game
     startGame();
 }
 
+/**
+ * Updates the player's position based on keyboard input and handles wall collisions.
+ * This implementation checks X and Y movement separately to allow sliding along walls.
+ */
 function updatePlayerPosition() {
-    if (keys.ArrowUp && player.y - player.radius > 0) player.y -= player.speed;
-    if (keys.ArrowDown && player.y + player.radius < canvas.height) player.y += player.speed;
-    if (keys.ArrowLeft && player.x - player.radius > 0) player.x -= player.speed;
-    if (keys.ArrowRight && player.x + player.radius < canvas.width) player.x += player.speed;
+    let dx = 0;
+    let dy = 0;
+    if (keys.ArrowUp) dy -= player.speed;
+    if (keys.ArrowDown) dy += player.speed;
+    if (keys.ArrowLeft) dx -= player.speed;
+    if (keys.ArrowRight) dx += player.speed;
+
+    // Move on X axis and check for collision
+    player.x += dx;
+    for (const wall of walls) {
+        if (isCollidingCircleRect(player, wall)) {
+            player.x -= dx; // Revert X movement
+            break;
+        }
+    }
+
+    // Move on Y axis and check for collision
+    player.y += dy;
+    for (const wall of walls) {
+        if (isCollidingCircleRect(player, wall)) {
+            player.y -= dy; // Revert Y movement
+            break;
+        }
+    }
 }
 
+/**
+ * Updates the camera's position to follow the player, clamping it to the world boundaries.
+ */
+function updateCamera() {
+    camera.x = player.x - canvas.width / 2;
+    camera.y = player.y - canvas.height / 2;
+    camera.x = Math.max(0, Math.min(camera.x, world.width - canvas.width));
+    camera.y = Math.max(0, Math.min(camera.y, world.height - canvas.height));
+}
+
+/**
+ * Updates bullet positions and handles their collision with walls.
+ */
 function updateBullets() {
     for (let i = bullets.length - 1; i >= 0; i--) {
         const bullet = bullets[i];
         bullet.x += bullet.dx;
         bullet.y += bullet.dy;
-        if (bullet.x - bullet.radius > canvas.width || bullet.x + bullet.radius < 0 ||
-            bullet.y - bullet.radius > canvas.height || bullet.y + bullet.radius < 0) {
-            bullets.splice(i, 1);
-        }
-    }
-}
-
-function spawnEnemy() {
-    if (isGameOver) return;
-
-    const radius = Math.random() * 20 + 10;
-    let x, y;
-
-    if (Math.random() < 0.5) {
-        x = Math.random() < 0.5 ? 0 - radius : canvas.width + radius;
-        y = Math.random() * canvas.height;
-    } else {
-        x = Math.random() * canvas.width;
-        y = Math.random() < 0.5 ? 0 - radius : canvas.height + radius;
-    }
-
-    const angle = Math.atan2(player.y - y, player.x - x);
-    const enemySpeed = 2.5;
-    const dx = Math.cos(angle) * enemySpeed;
-    const dy = Math.sin(angle) * enemySpeed;
-
-    enemies.push({ x, y, radius, color: 'green', dx, dy });
-
-    if (enemySpawnInterval > 600) {
-        enemySpawnInterval -= 25;
-    }
-    setTimeout(spawnEnemy, enemySpawnInterval);
-}
-
-function updateEnemies() {
-    for (let i = enemies.length - 1; i >= 0; i--) {
-        const enemy = enemies[i];
-        enemy.x += enemy.dx;
-        enemy.y += enemy.dy;
-
-        // Player-enemy collision
-        const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-        if (dist - enemy.radius - player.radius < 1) {
-            isGameOver = true;
-            return;
-        }
-
-        // Bullet-enemy collision
-        for (let j = bullets.length - 1; j >= 0; j--) {
-            const bullet = bullets[j];
-            const dist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
-            if (dist - enemy.radius - bullet.radius < 1) {
-                enemies.splice(i, 1);
-                bullets.splice(j, 1);
-                score += 10;
+        for (const wall of walls) {
+            if (isCollidingCircleRect(bullet, wall)) {
+                bullets.splice(i, 1);
                 break;
             }
         }
     }
 }
 
-// --- Drawing ---
+/**
+ * Checks for player collision with loot items and adds them to the inventory.
+ */
+function updateLoot() {
+    for (let i = lootItems.length - 1; i >= 0; i--) {
+        const item = lootItems[i];
+        const dist = Math.hypot(player.x - item.x, player.y - item.y);
+        if (dist < player.radius + item.radius) {
+            player.inventory.push(item);
+            lootItems.splice(i, 1);
+        }
+    }
+}
+
+/**
+ * Updates enemy positions, handles their AI state, and checks for collisions.
+ */
+function updateEnemies() {
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+
+        // If enemy is not active, check if the player is within its detection radius.
+        if (!enemy.isActive) {
+            const distToPlayer = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+            if (distToPlayer < enemy.detectionRadius) {
+                enemy.isActive = true;
+            }
+        }
+
+        // If active, move towards the player and handle wall collisions.
+        if (enemy.isActive) {
+            const oldPos = { x: enemy.x, y: enemy.y };
+            const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+            let newX = enemy.x + Math.cos(angle) * enemy.speed;
+            let newY = enemy.y + Math.sin(angle) * enemy.speed;
+
+            enemy.x = newX;
+            for (const wall of walls) {
+                if (isCollidingCircleRect(enemy, wall)) {
+                    enemy.x = oldPos.x;
+                    break;
+                }
+            }
+            enemy.y = newY;
+            for (const wall of walls) {
+                if (isCollidingCircleRect(enemy, wall)) {
+                    enemy.y = oldPos.y;
+                    break;
+                }
+            }
+        }
+
+        // Check for collision with the player (game over).
+        const playerDist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+        if (playerDist < player.radius + enemy.radius) {
+            isGameOver = true;
+            return;
+        }
+
+        // Check for collision with bullets.
+        for (let j = bullets.length - 1; j >= 0; j--) {
+            const bullet = bullets[j];
+            const bulletDist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
+            if (bulletDist < bullet.radius + enemy.radius) {
+                enemies.splice(i, 1);
+                bullets.splice(j, 1);
+                score += 100;
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * Checks if the player has the required item and is in an extraction zone.
+ */
+function checkWinCondition() {
+    const hasKeycard = player.inventory.some(item => item.name === 'Keycard');
+    if (!hasKeycard) return;
+
+    for (const point of extractionPoints) {
+        if (isCollidingCircleRect(player, point)) {
+            isGameWon = true;
+            break;
+        }
+    }
+}
+
+// =========
+// Drawing
+// =========
+
+/**
+ * Main drawing function for the game. Clears the canvas and draws all objects.
+ */
+function drawGame() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#d3d3d3';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Use camera to translate the world
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
+
+    // Draw world elements
+    const hasKeycard = player.inventory.some(item => item.name === 'Keycard');
+    extractionPoints.forEach(p => {
+        ctx.fillStyle = hasKeycard ? 'rgba(0, 255, 0, 0.4)' : 'rgba(255, 0, 0, 0.4)';
+        ctx.fillRect(p.x, p.y, p.width, p.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '18px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('EXTRACT', p.x + p.width / 2, p.y + p.height / 2 + 6);
+    });
+
+    walls.forEach(w => { ctx.fillStyle = '#a9a9a9'; ctx.fillRect(w.x, w.y, w.width, w.height); });
+    lootItems.forEach(item => drawCircle(item.x, item.y, item.radius, item.color));
+    enemies.forEach(e => drawCircle(e.x, e.y, e.radius, e.color));
+    bullets.forEach(b => drawCircle(b.x, b.y, b.radius, b.color));
+    drawCircle(player.x, player.y, player.radius, player.color);
+
+    ctx.restore();
+
+    // Draw UI elements (not affected by camera)
+    ctx.fillStyle = 'black';
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'start';
+    ctx.fillText('Score: ' + score, 10, 30);
+    const inventoryText = 'Inventory: ' + (player.inventory.length > 0 ? player.inventory.map(item => item.name).join(', ') : 'Empty');
+    ctx.fillText(inventoryText, 10, 60);
+    if (!hasKeycard) {
+        ctx.fillText('Objective: Find the Keycard!', 10, 90);
+    } else {
+        ctx.fillStyle = 'green';
+        ctx.fillText('Objective: Get to an extraction point!', 10, 90);
+    }
+}
+
 function drawCircle(x, y, radius, color) {
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2, false);
@@ -186,9 +360,10 @@ function drawStartScreen() {
     ctx.fillStyle = 'white';
     ctx.font = '40px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('2D Delta Operations', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillText('Delta Force: 2D Extraction', canvas.width / 2, canvas.height / 2 - 40);
     ctx.font = '20px Arial';
-    ctx.fillText('Click to Start', canvas.width / 2, canvas.height / 2 + 10);
+    ctx.fillText('Find the Keycard and extract!', canvas.width / 2, canvas.height/2 + 20);
+    ctx.fillText('Click to Start', canvas.width / 2, canvas.height / 2 + 50);
     ctx.textAlign = 'start';
 }
 
@@ -210,35 +385,53 @@ function drawGameOverScreen() {
     ctx.textAlign = 'start';
 }
 
-// --- Main Game Loop ---
+function drawWinScreen() {
+    cancelAnimationFrame(animationId);
+    ctx.fillStyle = 'rgba(20, 140, 20, 0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '50px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Extraction Successful!', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.font = '20px Arial';
+    ctx.fillText('You found the Keycard and made it out alive.', canvas.width / 2, canvas.height / 2);
+    ctx.font = '25px Arial';
+    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 30);
+    ctx.fillStyle = 'limegreen';
+    ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '25px Arial';
+    ctx.fillText('Play Again', canvas.width / 2, restartButton.y + 28);
+    ctx.textAlign = 'start';
+}
+
+// =========
+// Main Game Loop
+// =========
 function gameLoop() {
+    // State machine for the game
     if (!isGameStarted) {
         drawStartScreen();
         return;
     }
-
+    if (isGameWon) {
+        drawWinScreen();
+        return;
+    }
     if (isGameOver) {
         drawGameOverScreen();
         return;
     }
 
+    // If the game is running, update and draw everything
     animationId = requestAnimationFrame(gameLoop);
-
     updatePlayerPosition();
+    updateCamera();
     updateBullets();
+    updateLoot();
     updateEnemies();
-
-    // Drawing
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawCircle(player.x, player.y, player.radius, player.color);
-    bullets.forEach(b => drawCircle(b.x, b.y, b.radius, b.color));
-    enemies.forEach(e => drawCircle(e.x, e.y, e.radius, e.color));
-
-    // Draw Score
-    ctx.fillStyle = 'black';
-    ctx.font = '20px Arial';
-    ctx.textAlign = 'start';
-    ctx.fillText('Score: ' + score, 10, 30);
+    checkWinCondition();
+    drawGame();
 }
 
 // --- Initial Call ---
