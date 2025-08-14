@@ -30,7 +30,10 @@ const player = {
     radius: 15,
     color: 'blue',
     speed: 4,
-    inventory: []
+    health: 100,
+    maxHealth: 100,
+    inventory: [],
+    isInvincible: false
 };
 
 const restartButton = {
@@ -62,11 +65,11 @@ const MASTER_LOOT_LIST = [
 let lootItems = [];
 
 const MASTER_ENEMY_LIST = [
-    { x: 200, y: 200, radius: 15, color: '#c82333', speed: 2, detectionRadius: 350, isActive: false },
-    { x: 830, y: 1200, radius: 20, color: '#a01c28', speed: 1.5, detectionRadius: 400, isActive: false },
-    { x: 1600, y: 500, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false },
-    { x: 1400, y: 1400, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false },
-    { x: 450, y: 800, radius: 15, color: '#c82333', speed: 2.2, detectionRadius: 300, isActive: false },
+    { x: 200, y: 200, radius: 15, color: '#c82333', speed: 2, detectionRadius: 350, isActive: false, health: 100, maxHealth: 100 },
+    { x: 830, y: 1200, radius: 20, color: '#a01c28', speed: 1.5, detectionRadius: 400, isActive: false, health: 150, maxHealth: 150 },
+    { x: 1600, y: 500, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
+    { x: 1400, y: 1400, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
+    { x: 450, y: 800, radius: 15, color: '#c82333', speed: 2.2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
 ];
 let enemies = [];
 
@@ -136,6 +139,8 @@ function startGame() {
     score = 0;
     player.x = world.width / 2;
     player.y = world.height / 2;
+    player.health = player.maxHealth;
+    player.isInvincible = false;
     player.inventory = [];
     bullets.length = 0;
     // Create deep copies of the master lists for the current game session
@@ -227,6 +232,9 @@ function updateLoot() {
  * Updates enemy positions, handles their AI state, and checks for collisions.
  */
 function updateEnemies() {
+    const bulletDamage = 25;
+    const enemyCollisionDamage = 20;
+
     for (let i = enemies.length - 1; i >= 0; i--) {
         const enemy = enemies[i];
 
@@ -261,21 +269,45 @@ function updateEnemies() {
             }
         }
 
-        // Check for collision with the player (game over).
+        // Check for collision with the player
         const playerDist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-        if (playerDist < player.radius + enemy.radius) {
-            isGameOver = true;
-            return;
+        if (playerDist < player.radius + enemy.radius && !player.isInvincible) {
+            player.health -= enemyCollisionDamage;
+            player.isInvincible = true;
+
+            // Make player flash when invincible
+            let flashInterval = setInterval(() => {
+                player.color = player.color === 'blue' ? 'rgba(0,0,255,0.5)' : 'blue';
+            }, 100);
+
+            setTimeout(() => {
+                player.isInvincible = false;
+                player.color = 'blue'; // Reset color
+                clearInterval(flashInterval);
+            }, 2000);
+
+            if (player.health <= 0) {
+                isGameOver = true;
+                return; // Exit function immediately
+            }
         }
 
-        // Check for collision with bullets.
+        // Check for collision with bullets
         for (let j = bullets.length - 1; j >= 0; j--) {
             const bullet = bullets[j];
             const bulletDist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
             if (bulletDist < bullet.radius + enemy.radius) {
-                enemies.splice(i, 1);
+                // Apply damage to enemy
+                enemy.health -= bulletDamage;
+                // Remove bullet
                 bullets.splice(j, 1);
-                score += 100;
+
+                // If enemy has no health left, remove it and add score
+                if (enemy.health <= 0) {
+                    enemies.splice(i, 1);
+                    score += 100;
+                }
+                // Break because this bullet is gone and can't hit other enemies
                 break;
             }
         }
@@ -302,6 +334,36 @@ function checkWinCondition() {
 // =========
 
 /**
+ * Draws a health bar at a specific position.
+ */
+function drawHealthBar(x, y, width, height, currentHealth, maxHealth) {
+    // Clamp health to not be negative
+    const health = Math.max(0, currentHealth);
+    const healthPercentage = health / maxHealth;
+
+    // Draw the background (empty part of the bar)
+    ctx.fillStyle = '#333'; // Dark gray
+    ctx.fillRect(x, y, width, height);
+
+    // Choose color based on health percentage
+    if (healthPercentage > 0.6) {
+        ctx.fillStyle = '#28a745'; // Green
+    } else if (healthPercentage > 0.3) {
+        ctx.fillStyle = '#ffc107'; // Yellow
+    } else {
+        ctx.fillStyle = '#dc3545'; // Red
+    }
+
+    // Draw the current health
+    const healthWidth = width * healthPercentage;
+    ctx.fillRect(x, y, healthWidth, height);
+
+    // Optional: Draw a border for the health bar
+    ctx.strokeStyle = '#000';
+    ctx.strokeRect(x, y, width, height);
+}
+
+/**
  * Main drawing function for the game. Clears the canvas and draws all objects.
  */
 function drawGame() {
@@ -326,7 +388,15 @@ function drawGame() {
 
     walls.forEach(w => { ctx.fillStyle = '#a9a9a9'; ctx.fillRect(w.x, w.y, w.width, w.height); });
     lootItems.forEach(item => drawCircle(item.x, item.y, item.radius, item.color));
-    enemies.forEach(e => drawCircle(e.x, e.y, e.radius, e.color));
+
+    enemies.forEach(e => {
+        drawCircle(e.x, e.y, e.radius, e.color);
+        // Draw health bar above enemy if they've taken damage
+        if (e.health < e.maxHealth) {
+            drawHealthBar(e.x - e.radius, e.y - e.radius - 15, e.radius * 2, 5, e.health, e.maxHealth);
+        }
+    });
+
     bullets.forEach(b => drawCircle(b.x, b.y, b.radius, b.color));
     drawCircle(player.x, player.y, player.radius, player.color);
 
@@ -339,12 +409,18 @@ function drawGame() {
     ctx.fillText('Score: ' + score, 10, 30);
     const inventoryText = 'Inventory: ' + (player.inventory.length > 0 ? player.inventory.map(item => item.name).join(', ') : 'Empty');
     ctx.fillText(inventoryText, 10, 60);
+
     if (!hasKeycard) {
-        ctx.fillText('Objective: Find the Keycard!', 10, 90);
+        ctx.fillText('Objective: Find the Keycard!', 10, 120);
     } else {
         ctx.fillStyle = 'green';
-        ctx.fillText('Objective: Get to an extraction point!', 10, 90);
+        ctx.fillText('Objective: Get to an extraction point!', 10, 120);
     }
+
+    // Draw Player Health Bar
+    ctx.fillStyle = 'black';
+    ctx.fillText('Health:', 10, 90);
+    drawHealthBar(90, 75, 200, 20, player.health, player.maxHealth);
 }
 
 function drawCircle(x, y, radius, color) {
