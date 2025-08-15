@@ -44,6 +44,7 @@ const restartButton = {
 };
 
 const bullets = [];
+const enemyBullets = [];
 const walls = [
     // Border walls
     { x: 0, y: 0, width: world.width, height: 10 },
@@ -65,11 +66,11 @@ const MASTER_LOOT_LIST = [
 let lootItems = [];
 
 const MASTER_ENEMY_LIST = [
-    { x: 200, y: 200, radius: 15, color: '#c82333', speed: 2, detectionRadius: 350, isActive: false, health: 100, maxHealth: 100 },
-    { x: 830, y: 1200, radius: 20, color: '#a01c28', speed: 1.5, detectionRadius: 400, isActive: false, health: 150, maxHealth: 150 },
-    { x: 1600, y: 500, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
-    { x: 1400, y: 1400, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
-    { x: 450, y: 800, radius: 15, color: '#c82333', speed: 2.2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100 },
+    { x: 200, y: 200, radius: 15, color: '#c82333', speed: 2, detectionRadius: 350, isActive: false, health: 100, maxHealth: 100, fireRate: 2000, shootCooldown: 0 },
+    { x: 830, y: 1200, radius: 20, color: '#a01c28', speed: 1.5, detectionRadius: 400, isActive: false, health: 150, maxHealth: 150, fireRate: 2500, shootCooldown: 0 },
+    { x: 1600, y: 500, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100, fireRate: 2000, shootCooldown: 0 },
+    { x: 1400, y: 1400, radius: 15, color: '#c82333', speed: 2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100, fireRate: 2000, shootCooldown: 0 },
+    { x: 450, y: 800, radius: 15, color: '#c82333', speed: 2.2, detectionRadius: 300, isActive: false, health: 100, maxHealth: 100, fireRate: 1800, shootCooldown: 0 },
 ];
 let enemies = [];
 
@@ -143,6 +144,7 @@ function startGame() {
     player.isInvincible = false;
     player.inventory = [];
     bullets.length = 0;
+    enemyBullets.length = 0;
     // Create deep copies of the master lists for the current game session
     lootItems = JSON.parse(JSON.stringify(MASTER_LOOT_LIST));
     enemies = JSON.parse(JSON.stringify(MASTER_ENEMY_LIST));
@@ -215,6 +217,48 @@ function updateBullets() {
 }
 
 /**
+ * Updates enemy bullet positions and handles their collision with walls and the player.
+ */
+function updateEnemyBullets() {
+    const enemyBulletDamage = 10;
+
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const bullet = enemyBullets[i];
+        bullet.x += bullet.dx;
+        bullet.y += bullet.dy;
+
+        // Wall collision
+        for (const wall of walls) {
+            if (isCollidingCircleRect(bullet, wall)) {
+                enemyBullets.splice(i, 1);
+                break;
+            }
+        }
+
+        // Player collision
+        if (isCollidingCircleRect(bullet, player) && !player.isInvincible) {
+            player.health -= enemyBulletDamage;
+            player.isInvincible = true;
+            enemyBullets.splice(i, 1);
+
+            let flashInterval = setInterval(() => {
+                player.color = player.color === 'blue' ? 'rgba(0,0,255,0.5)' : 'blue';
+            }, 100);
+            setTimeout(() => {
+                player.isInvincible = false;
+                player.color = 'blue';
+                clearInterval(flashInterval);
+            }, 2000);
+
+            if (player.health <= 0) {
+                isGameOver = true;
+            }
+            break;
+        }
+    }
+}
+
+/**
  * Checks for player collision with loot items and adds them to the inventory.
  */
 function updateLoot() {
@@ -238,21 +282,23 @@ function updateEnemies() {
     for (let i = enemies.length - 1; i >= 0; i--) {
         const enemy = enemies[i];
 
-        // If enemy is not active, check if the player is within its detection radius.
+        // Activation logic
         if (!enemy.isActive) {
             const distToPlayer = Math.hypot(player.x - enemy.x, player.y - enemy.y);
             if (distToPlayer < enemy.detectionRadius) {
                 enemy.isActive = true;
+                // Set initial cooldown when activated to stagger their first shots
+                enemy.shootCooldown = Date.now() + Math.random() * enemy.fireRate;
             }
         }
 
-        // If active, move towards the player and handle wall collisions.
+        // If active, move, shoot, and check for collisions
         if (enemy.isActive) {
+            // Movement
             const oldPos = { x: enemy.x, y: enemy.y };
             const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
             let newX = enemy.x + Math.cos(angle) * enemy.speed;
             let newY = enemy.y + Math.sin(angle) * enemy.speed;
-
             enemy.x = newX;
             for (const wall of walls) {
                 if (isCollidingCircleRect(enemy, wall)) {
@@ -267,47 +313,46 @@ function updateEnemies() {
                     break;
                 }
             }
+
+            // Shooting
+            if (Date.now() > enemy.shootCooldown) {
+                const bulletAngle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+                const bulletSpeed = 5;
+                const dx = Math.cos(bulletAngle) * bulletSpeed;
+                const dy = Math.sin(bulletAngle) * bulletSpeed;
+                enemyBullets.push({ x: enemy.x, y: enemy.y, radius: 6, color: '#ff6347', dx, dy });
+                enemy.shootCooldown = Date.now() + enemy.fireRate;
+            }
         }
 
-        // Check for collision with the player
+        // Player Collision
         const playerDist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
         if (playerDist < player.radius + enemy.radius && !player.isInvincible) {
             player.health -= enemyCollisionDamage;
             player.isInvincible = true;
-
-            // Make player flash when invincible
-            let flashInterval = setInterval(() => {
-                player.color = player.color === 'blue' ? 'rgba(0,0,255,0.5)' : 'blue';
-            }, 100);
-
+            let flashInterval = setInterval(() => { player.color = player.color === 'blue' ? 'rgba(0,0,255,0.5)' : 'blue'; }, 100);
             setTimeout(() => {
                 player.isInvincible = false;
-                player.color = 'blue'; // Reset color
+                player.color = 'blue';
                 clearInterval(flashInterval);
             }, 2000);
-
             if (player.health <= 0) {
                 isGameOver = true;
-                return; // Exit function immediately
+                return;
             }
         }
 
-        // Check for collision with bullets
+        // Bullet Collision
         for (let j = bullets.length - 1; j >= 0; j--) {
             const bullet = bullets[j];
             const bulletDist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
             if (bulletDist < bullet.radius + enemy.radius) {
-                // Apply damage to enemy
                 enemy.health -= bulletDamage;
-                // Remove bullet
                 bullets.splice(j, 1);
-
-                // If enemy has no health left, remove it and add score
                 if (enemy.health <= 0) {
                     enemies.splice(i, 1);
                     score += 100;
                 }
-                // Break because this bullet is gone and can't hit other enemies
                 break;
             }
         }
@@ -398,6 +443,7 @@ function drawGame() {
     });
 
     bullets.forEach(b => drawCircle(b.x, b.y, b.radius, b.color));
+    enemyBullets.forEach(b => drawCircle(b.x, b.y, b.radius, b.color));
     drawCircle(player.x, player.y, player.radius, player.color);
 
     ctx.restore();
@@ -504,6 +550,7 @@ function gameLoop() {
     updatePlayerPosition();
     updateCamera();
     updateBullets();
+    updateEnemyBullets();
     updateLoot();
     updateEnemies();
     checkWinCondition();
