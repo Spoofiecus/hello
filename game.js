@@ -11,14 +11,14 @@ canvas.height = 600;
 // =========
 const assets = {};
 const assetSources = {
-    player: 'https://i.imgur.com/M12vj32.png',
-    enemy: 'https://i.imgur.com/t24i6t2.png',
-    bullet: 'https://i.imgur.com/lVqj3G3.png',
-    enemyBullet: 'https://i.imgur.com/c1i1sJ4.png',
-    wall: 'https://i.imgur.com/uG7gSjA.png',
-    ground: 'https://i.imgur.com/M5S4p5B.png',
-    keycard: 'https://i.imgur.com/gA4g4gH.png',
-    healthPack: 'https://i.imgur.com/Sj4J1bT.png',
+    player: 'https://placehold.co/40x40/00f/fff?text=P',
+    enemy: 'https://placehold.co/40x40/f00/fff?text=E',
+    bullet: 'https://placehold.co/10x10/ffa500/000?text=o',
+    enemyBullet: 'https://placehold.co/12x12/f0f/000?text=o',
+    wall: 'https://placehold.co/50x50/a9a9a9/333?text=W',
+    ground: 'https://placehold.co/100x100/d3d3d3/666?text=G',
+    keycard: 'https://placehold.co/30x30/ffd700/000?text=K',
+    healthPack: 'https://placehold.co/30x30/32cd32/fff?text=H',
 };
 let assetsLoaded = 0;
 let totalAssets = Object.keys(assetSources).length;
